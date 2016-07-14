@@ -1,0 +1,319 @@
+<html>
+<head>
+<title>Lullaby no 6.1</title>
+<script src="js/moo.js"></script>
+<script src="js/filter.js"></script>
+<script src="js/delay.js"></script>
+<script src="js/reverb.js"></script>
+<script src="js/freeverb.js"></script>
+</head>
+<body>
+<script>
+function osc(c,t,f,g,to){
+	this.f=f;
+	this.o=c.createOscillator();
+	this.o.type = t;
+	this.o.frequency.value = f;
+	this.g = c.createGain();
+	this.g.gain.value = g;
+	this.o.connect(this.g);
+	this.g.connect(to);
+	this.o.start(0);
+}
+
+function noise(c,t,g,to){
+    var bufferSize = 4096;
+    
+    var b0, b1, b2, b3, b4, b5, b6;
+    b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0;
+    this.o = c.createScriptProcessor(bufferSize, 1, 1);
+    this.o.onaudioprocess = function(e) {
+        var output = e.outputBuffer.getChannelData(0);
+        for (var i = 0; i < bufferSize; i++) {
+            var white = Math.random() * 2 - 1;
+            b0 = 0.99886 * b0 + white * 0.0555179;
+            b1 = 0.99332 * b1 + white * 0.0750759;
+            b2 = 0.96900 * b2 + white * 0.1538520;
+            b3 = 0.86650 * b3 + white * 0.3104856;
+            b4 = 0.55000 * b4 + white * 0.5329522;
+            b5 = -0.7616 * b5 - white * 0.0168980;
+            output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
+            output[i] *= 0.11; // (roughly) compensate for gain
+            b6 = white * 0.115926;
+        }
+    }
+	this.g = c.createGain();
+	this.g.gain.value = g;
+	this.o.connect(this.g);
+	this.g.connect(to);
+}
+
+var CustomLFO=new Class({
+	initialize:function(context,min,max,buff)
+	{
+		this.min=min;
+		this.max=max;
+		this.buff=buff;
+		this.o=context.createScriptProcessor(this.buff, 1, 1);
+		this.o.onaudioprocess=this.process.bind(this);
+	},
+	map:function(value)
+	{
+		var istart=-1;
+		var istop=1;
+		var ostart=this.min;
+		var ostop=this.max;
+		var r=ostart + (ostop - ostart) * ((value - istart) / (istop - istart));
+    	return r;
+	},
+	process:function(e)
+	{
+		var output = e.outputBuffer.getChannelData(0);
+		var input=e.inputBuffer.getChannelData(0);
+		for (var i = 0; i < this.buff; i++) 
+		{
+			output[i]=this.map(input[i],this.min,this.max);
+		}
+	},
+	connect:function(dest){
+		this.o.connect(dest);
+	}
+});
+
+var LFO=new Class({
+	Implements: [Events, Options],
+	options:{
+		type:'sine',
+		min:-1,
+		max:1,
+		freq:1,
+		buff:4096
+	},
+	initialize:function(context,o)
+	{
+		this.setOptions(o);
+		this.osc= context.createOscillator();
+		this.osc.type = this.options.type;
+		this.osc.frequency.value = this.options.freq;
+		this.osc.start(0);
+		
+		this.lfo=new CustomLFO(context, this.options.min, this.options.max, this.options.buff);
+		this.osc.connect(this.lfo.o);
+	},
+	set_freq:function(val){
+		this.osc.frequency.value = val;
+	},
+	connect:function(dest)
+	{
+		this.lfo.connect(dest);
+	}
+});
+
+var FXC=new Class({
+	Extends:Fx,
+	compute:function(from,to,delta){
+		var val=this.parent(from,to,delta);
+		this.fireEvent('compute',val);
+	}
+});
+
+var LFO_feeder=new Class({
+	Implements:[Events,Options],
+	initialize:function(min,max)
+	{
+		this.c=1000;
+		this.min=min*this.c;
+		this.max=max*this.c;
+		this.s=new FXC({
+			duration:this.c,
+			'onComplete':this.comp.bind(this),
+			'onCompute':this.compute.bind(this)
+		});
+		
+		this.prev=this.get_num();
+		this.s.set(this.prev);
+		this.gen();
+	},
+	compute:function(val)
+	{
+		this.fireEvent('compute',val);
+	},
+	get_num:function()
+	{
+		return (Number.random(this.min, this.max))/this.c; 
+	},
+	comp:function(){
+		var r=Number.random(1000,5000);
+		this.gen.delay(r, this);
+	},
+	gen:function()
+	{
+		var prev=this.prev;
+		var r=this.get_num();
+		this.prev=r;
+		this.s.start(prev,r);
+	}
+});
+
+var Filt=new Class({
+	initialize:function(t,c,to){
+		this.f=c.createBiquadFilter();
+		this.f.type=t;
+		this.g = c.createGain();
+		this.g.gain.value = 1;
+		this.f.connect(this.g);
+		this.g.connect(to);
+	},
+	set_q:function(val){
+		
+	},
+	set_f:function(val){
+		
+	}
+});
+function makeDistortionCurve(amount) {
+  var k = typeof amount === 'number' ? amount : 50,
+    n_samples = 44100,
+    curve = new Float32Array(n_samples),
+    deg = Math.PI / 180,
+    i = 0,
+    x;
+  for ( ; i < n_samples; ++i ) {
+    x = i * 2 / n_samples - 1;
+    curve[i] = ( 3 + k ) * x * 20 * deg / ( Math.PI + k * Math.abs(x) );
+  }
+  return curve;
+};
+
+var App={
+	init:function(){
+		var context = new AudioContext();
+		
+		var dd=new Delay(context,{feedback:0.7, type:1, delay: 5, dry: 0.9});
+		dd.connect(context.destination);
+		
+		var distortion = context.createWaveShaper();
+		distortion.curve = makeDistortionCurve(50);
+		distortion.oversample = '4x';
+		distortion.connect(dd.input);
+		
+		var splitter=context.createChannelSplitter(2);
+		
+		var panner = context.createPanner();
+		panner.panningModel = 'HRTF';
+		panner.distanceModel = 'inverse';
+		panner.refDistance = 30;
+		panner.maxDistance = 1000;
+		panner.rolloffFactor = 50;
+		panner.coneInnerAngle = 80;
+		panner.coneOuterAngle = 20;
+		panner.coneOuterGain = 0.2;
+		panner.setOrientation(1,0,0);
+		panner.connect(distortion);
+		this.panner=panner;
+		
+		var listener = context.listener;
+		listener.setOrientation(0,0,-1,0,1,0);
+		this.listener=listener;
+		
+		
+		var comp=context.createDynamicsCompressor();
+		comp.threshold.value = -50;
+		comp.knee.value = 40;
+		comp.ratio.value = 12;
+		comp.reduction.value = -20;
+		comp.attack.value = 0;
+		comp.release.value = 0.25;
+		comp.connect(splitter);
+		splitter.connect(context.destination, 1);
+		splitter.connect(panner, 0);
+		
+		var delay=new Delay(context,{feedback:0.6, delay: 5, dry: 0.7});
+		delay.connect(comp);
+		
+		var verb=new SimpleReverb(context, {seconds: 15, decay: 10, reverse: 0.8});
+		verb.connect(delay.input);
+
+		var reverb = Freeverb(context);
+		reverb.roomSize=1;
+		reverb.dampening=200;
+		reverb.dry.value=0.2;
+		reverb.wet.value=0.3;
+		reverb.connect(delay.input);
+		
+		var filt1=new Filt('highpass', context, verb.input);
+		var filt2=new Filt('lowpass', context, verb.input);
+		
+		var o1=new osc(context,'sine',107,0.5, reverb);
+		var o2=new osc(context,'sawtooth',107,0.2, filt1.f);
+		
+		var o3=new osc(context,'sine',55,0.7, verb.input);
+		var o32=new osc(context,'sawtooth',55,0.7, filt1.f);
+		var o33=new osc(context,'sine',55,0.7, verb.input);
+		var o4=new osc(context,'sawtooth',55,0.3,filt2.f);
+		
+		new noise(context,'pink',0.2, filt2.f);
+		
+		var f1=new LFO_feeder(0.01, 0.5);
+		var f2=new LFO_feeder(0.02, 0.8);
+		var f3=new LFO_feeder(0.01, 0.6);
+		var f4=new LFO_feeder(0.02, 0.7);
+		
+		var f5=new LFO_feeder(0.01, 0.6);
+		var f6=new LFO_feeder(0.02, 0.7);
+		var f7=new LFO_feeder(0.01, 0.6);
+		var f8=new LFO_feeder(0.02, 0.7);
+		
+		var fp=new LFO_feeder(0, 50);
+		
+		var lfo1=new LFO(context,{min:105,max:109});
+		var lfo2=new LFO(context,{min:104,max:110});
+		var lfo3=new LFO(context,{min:55,max:57});
+		var lfo4=new LFO(context,{min:54,max:58});
+		
+		var lfo5=new LFO(context,{min:1000,max:10000});
+		var lfo6=new LFO(context,{min:1,max:3});
+		var lfo7=new LFO(context,{min:50,max:10000});
+		var lfo8=new LFO(context,{min:0.6,max:1});
+		
+		f1.addEvent('compute',lfo1.set_freq.bind(lfo1));
+		f2.addEvent('compute',lfo2.set_freq.bind(lfo2));
+		f3.addEvent('compute',lfo3.set_freq.bind(lfo3));
+		f4.addEvent('compute',lfo4.set_freq.bind(lfo4));
+		
+		f5.addEvent('compute',lfo5.set_freq.bind(lfo5));
+		f6.addEvent('compute',lfo6.set_freq.bind(lfo6));
+		f7.addEvent('compute',lfo7.set_freq.bind(lfo7));
+		f8.addEvent('compute',lfo8.set_freq.bind(lfo8));
+		
+		fp.addEvent('compute',this.pos_pan.bind(this));
+		
+		
+		lfo1.connect(o1.o.frequency);
+		lfo2.connect(o2.o.frequency);
+		lfo3.connect(o3.o.frequency);
+		lfo4.connect(o32.o.frequency);
+		lfo3.connect(o33.o.frequency);
+		lfo4.connect(o4.o.frequency);
+		
+		lfo5.connect(filt1.f.frequency);
+		lfo6.connect(filt1.f.Q);
+		lfo7.connect(filt2.f.frequency);
+		lfo8.connect(filt2.f.Q);
+	},
+	pos_pan:function(val){
+		this.panner.setPosition(val,(-1*val),0);
+	}
+};
+window.addEvent('domready',App.init.bind(App));
+</script>
+<script>
+	(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+				(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+	})(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+	ga('create', 'UA-70429736-1', 'auto');
+	ga('send', 'pageview');
+</script>
+</body>
+</html>
